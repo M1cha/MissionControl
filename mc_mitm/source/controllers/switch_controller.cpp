@@ -17,9 +17,107 @@
 #include "../mcmitm_config.hpp"
 #include <string>
 
+static u32 hid_field_extract(u8 *report, unsigned offset, int n)
+{
+	unsigned int idx = offset / 8;
+	unsigned int bit_nr = 0;
+	unsigned int bit_shift = offset % 8;
+	int bits_to_copy = 8 - bit_shift;
+	u32 value = 0;
+	u32 mask = n < 32 ? (1U << n) - 1 : ~0U;
+
+	while (n > 0) {
+		value |= ((u32)report[idx] >> bit_shift) << bit_nr;
+		n -= bits_to_copy;
+		bit_nr += bits_to_copy;
+		bits_to_copy = 8;
+		bit_shift = 0;
+		idx++;
+	}
+
+	return value & mask;
+}
+
+#define JC_MAX_STICK_MAG		 32767
+#define JC_CAL_USR_MAGIC_0		 0xB2
+#define JC_CAL_USR_MAGIC_1		 0xA1
+
+static bool has_cal_magic(u8 *reply)
+{
+	return reply[0] != JC_CAL_USR_MAGIC_0 || reply[1] != JC_CAL_USR_MAGIC_1;
+}
+
 namespace ams::controller {
 
     namespace {
+        constexpr float stick_ratio = JOYSTICK_MAX / (STICK_MAX / 2.0);
+
+        static s32 joycon_map_stick_val(struct joycon_stick_cal *cal, s32 val)
+        {
+            s32 center = cal->center;
+            s32 min = cal->min;
+            s32 max = cal->max;
+            s32 new_val;
+
+            if (val > center) {
+                new_val = (val - center) * JC_MAX_STICK_MAG;
+                new_val /= (max - center);
+            } else {
+                new_val = (center - val) * -JC_MAX_STICK_MAG;
+                new_val /= (center - min);
+            }
+            new_val = std::clamp(new_val, (s32)-JC_MAX_STICK_MAG, (s32)JC_MAX_STICK_MAG);
+            return new_val;
+        }
+
+        static void joycon_read_stick_calibration(u8 *raw_cal,
+                struct joycon_stick_cal_xy *cal,
+                bool left_stick)
+        {
+            s32 x_max_above;
+            s32 x_min_below;
+            s32 y_max_above;
+            s32 y_min_below;
+
+            if (left_stick) {
+                x_max_above = hid_field_extract((raw_cal + 0), 0, 12);
+                x_min_below = hid_field_extract((raw_cal + 6), 0, 12);
+                y_max_above = hid_field_extract((raw_cal + 1), 4, 12);
+                y_min_below = hid_field_extract((raw_cal + 7), 4, 12);
+
+                cal->x.center = hid_field_extract((raw_cal + 3), 0, 12);
+                cal->y.center = hid_field_extract((raw_cal + 4), 4, 12);
+            } else {
+                cal->x.center = hid_field_extract((raw_cal + 0), 0, 12);
+                cal->y.center = hid_field_extract((raw_cal + 1), 4, 12);
+                x_min_below = hid_field_extract((raw_cal + 3), 0, 12);
+                y_min_below = hid_field_extract((raw_cal + 4), 4, 12);
+                x_max_above = hid_field_extract((raw_cal + 6), 0, 12);
+                y_max_above = hid_field_extract((raw_cal + 7), 4, 12);
+            }
+
+            cal->x.max = cal->x.center + x_max_above;
+            cal->x.min = cal->x.center - x_min_below;
+            cal->y.max = cal->y.center + y_max_above;
+            cal->y.min = cal->y.center - y_min_below;
+        }
+
+        void ConvertStickValues(SwitchAnalogStick *input, HidAnalogStickState  *output) {
+            s32 x = static_cast<s32>(stick_ratio * (input->GetX() - STICK_CENTER));
+            s32 y = static_cast<s32>(stick_ratio * (input->GetY() - STICK_CENTER));
+            float mag = std::sqrt(std::pow(x, 2) + std::pow(y, 2));
+            if (mag < (0.12 * JOYSTICK_MAX)) {
+                output->x = 0;
+                output->y = 0;
+            } else if (mag > (0.95 * JOYSTICK_MAX)) {
+                float ratio = float(JOYSTICK_MAX) / mag;
+                output->x = std::clamp<s32>(static_cast<s32>(x * ratio), JOYSTICK_MIN, JOYSTICK_MAX);
+                output->y = std::clamp<s32>(static_cast<s32>(y * ratio), JOYSTICK_MIN, JOYSTICK_MAX);
+            } else {
+                output->x = std::clamp<s32>(x, JOYSTICK_MIN, JOYSTICK_MAX);
+                output->y = std::clamp<s32>(y, JOYSTICK_MIN, JOYSTICK_MAX);
+            }
+        }
 
         const u8 led_player_mappings[] = {
             SwitchPlayerNumber_Unknown, //0000
@@ -91,15 +189,36 @@ namespace ams::controller {
         auto input_report = reinterpret_cast<SwitchInputReport *>(m_input_report.data);
         if (input_report->id == 0x21) {
             if (input_report->type0x21.hid_command_response.id == HidCommand_SerialFlashRead) {
+                u8 *data = input_report->type0x21.hid_command_response.data.serial_flash_read.data;
+
                 if (input_report->type0x21.hid_command_response.data.serial_flash_read.address == 0x6050) {
                     if (ams::mitm::GetSystemLanguage() == 10) {
                         u8 data[] = {0xff, 0xd7, 0x00, 0x00, 0x57, 0xb7, 0x00, 0x57, 0xb7, 0x00, 0x57, 0xb7};
-                        std::memcpy(input_report->type0x21.hid_command_response.data.serial_flash_read.data, data, sizeof(data));
+                        std::memcpy(data, data, sizeof(data));
                     }
+                }
+                else if (input_report->type0x21.hid_command_response.data.serial_flash_read.address == 0x8010) {
+                    m_has_user_cal_left = has_cal_magic(data);
+                }
+                else if (input_report->type0x21.hid_command_response.data.serial_flash_read.address == 0x801B) {
+                    m_has_user_cal_right = has_cal_magic(data);
+                }
+                else if (input_report->type0x21.hid_command_response.data.serial_flash_read.address == 0x603D) {
+                    joycon_read_stick_calibration(data, &m_cal_left, true);
+                }
+                else if (input_report->type0x21.hid_command_response.data.serial_flash_read.address == 0x6046) {
+                    joycon_read_stick_calibration(data, &m_cal_right, false);
+                }
+                else if (input_report->type0x21.hid_command_response.data.serial_flash_read.address == 0x8012) {
+                    joycon_read_stick_calibration(data, &m_cal_left_user, true);
+                }
+                else if (input_report->type0x21.hid_command_response.data.serial_flash_read.address == 0x801D) {
+                    joycon_read_stick_calibration(data, &m_cal_right_user, false);
                 }
             }
         }
 
+        this->TranslateInputReport(input_report);
         this->ApplyButtonCombos(&input_report->buttons); 
 
         R_RETURN(bluetooth::hid::report::WriteHidDataReport(m_address, &m_input_report));
@@ -217,6 +336,121 @@ namespace ams::controller {
     void SwitchController::UpdateControllerState(const bluetooth::HidReport *report) {
         m_input_report.size = report->size;
         std::memcpy(m_input_report.data, report->data, report->size);
+    }
+
+    void SwitchController::TranslateInputReport(SwitchInputReport *input_report) {
+        SwitchButtonData *buttons = &input_report->buttons;
+
+        if (buttons->ZL && buttons->L && buttons->ZR && buttons->R) {
+            if (!m_hdls_combo_pressed) {
+                if (m_hdls_initialized) {
+                    hiddbgDetachHdlsVirtualDevice(m_hdls_handle);
+                    m_hdls_initialized = false;
+                } else {
+                    R_ABORT_UNLESS(hiddbgAttachHdlsVirtualDevice(&m_hdls_handle, &m_hdls_device_info));
+                    R_ABORT_UNLESS(hiddbgSetHdlsState(m_hdls_handle, &m_hdls_state));
+                    m_hdls_initialized = true;
+                }
+            }
+
+            m_hdls_combo_pressed = true;
+        } else {
+            m_hdls_combo_pressed = false;
+        }
+
+        if (!m_hdls_initialized) {
+            return;
+        }
+
+        m_hdls_state.buttons = 0;
+        m_hdls_state.analog_stick_l.x = 0;
+        m_hdls_state.analog_stick_l.y = 0;
+
+        if (buttons->ZL) {
+            if (buttons->A) {
+                m_hdls_state.buttons |= HidNpadButton_A;
+            }
+            if (buttons->B) {
+                m_hdls_state.buttons |= HidNpadButton_B;
+            }
+            if (buttons->L) {
+                m_hdls_state.buttons |= HidNpadButton_L;
+            }
+            if (buttons->R) {
+                m_hdls_state.buttons |= HidNpadButton_R;
+            }
+            if (buttons->X) {
+                m_hdls_state.buttons |= HidNpadButton_X;
+            }
+            if (buttons->Y) {
+                m_hdls_state.buttons |= HidNpadButton_Y;
+            }
+            if (buttons->ZR) {
+                m_hdls_state.buttons |= HidNpadButton_ZR;
+            }
+            if (buttons->plus) {
+                m_hdls_state.buttons |= HidNpadButton_Plus;
+            }
+            if (buttons->minus) {
+                m_hdls_state.buttons |= HidNpadButton_Minus;
+            }
+            if (buttons->dpad_left) {
+                m_hdls_state.buttons |= HidNpadButton_Left;
+            }
+            if (buttons->dpad_right) {
+                m_hdls_state.buttons |= HidNpadButton_Right;
+            }
+            if (buttons->dpad_up) {
+                m_hdls_state.buttons |= HidNpadButton_Up;
+            }
+            if (buttons->dpad_down) {
+                m_hdls_state.buttons |= HidNpadButton_Down;
+            }
+            if (buttons->lstick_press) {
+                m_hdls_state.buttons |= HidNpadButton_StickL;
+            }
+            if (buttons->rstick_press) {
+                m_hdls_state.buttons |= HidNpadButton_StickR;
+            }
+
+            {
+                struct joycon_stick_cal_xy *cal = &m_cal_left;
+
+                if (m_has_user_cal_left) {
+                    cal = &m_cal_left_user;
+                }
+
+                m_hdls_state.analog_stick_l.x = joycon_map_stick_val(&cal->x, input_report->left_stick.GetX());
+                m_hdls_state.analog_stick_l.y = joycon_map_stick_val(&cal->y, input_report->left_stick.GetY());
+            }
+
+            {
+                struct joycon_stick_cal_xy *cal = &m_cal_right;
+
+                if (m_has_user_cal_right) {
+                    cal = &m_cal_right_user;
+                }
+
+                m_hdls_state.analog_stick_r.x = joycon_map_stick_val(&cal->x, input_report->right_stick.GetX());
+                m_hdls_state.analog_stick_r.y = joycon_map_stick_val(&cal->y, input_report->right_stick.GetY());
+            }
+
+            if(0) {
+            ConvertStickValues(&input_report->left_stick, &m_hdls_state.analog_stick_l);
+            ConvertStickValues(&input_report->right_stick, &m_hdls_state.analog_stick_r);
+            }
+
+            *buttons = {0};
+            input_report->left_stick.SetX(STICK_CENTER);
+            input_report->left_stick.SetY(STICK_CENTER);
+            input_report->right_stick.SetX(STICK_CENTER);
+            input_report->right_stick.SetY(STICK_CENTER);
+        }
+
+        if (R_FAILED(hiddbgSetHdlsState(m_hdls_handle, &m_hdls_state))) {
+            hiddbgDetachHdlsVirtualDevice(m_hdls_handle);
+            m_hdls_initialized = false;
+        }
     }
 
     void SwitchController::ApplyButtonCombos(SwitchButtonData *buttons) {

@@ -29,6 +29,9 @@
 #include "bluetooth_mitm/bluetooth/bluetooth_ble.hpp"
 #include "usb/mc_usb_handler.hpp"
 
+static HiddbgHdlsSessionId hdlsSessionId;
+alignas(0x1000) static  u8 hidBuffer[0x1000];
+
 namespace ams::mitm {
 
     namespace {
@@ -105,6 +108,14 @@ namespace ams::mitm {
             // Loop until we can initialise btm
             while (R_FAILED(btmInitialize())) {
                 os::SleepThread(ams::TimeSpan::FromMilliSeconds(200));
+            }
+
+            while (R_FAILED(hiddbgInitialize())) {
+                os::SleepThread(ams::TimeSpan::FromMilliSeconds(200));
+            }
+
+            if (hosversionAtLeast(7, 0, 0)) {
+                R_ABORT_UNLESS(hiddbgAttachHdlsWorkBuffer(&hdlsSessionId, hidBuffer, sizeof(hidBuffer)));
             }
         }
 
