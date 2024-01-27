@@ -22,6 +22,33 @@
 
 namespace ams::controller {
 
+    struct joycon_stick_cal {
+        s32 max = 3500;
+        s32 min = 500;
+        s32 center = 2000;
+    };
+
+    struct joycon_stick_cal_xy {
+        struct joycon_stick_cal x;
+        struct joycon_stick_cal y;
+    };
+
+    struct hdls_controller {
+        bool initialized = false;
+        HiddbgHdlsHandle handle;
+        HiddbgHdlsDeviceInfo device_info = {
+            .deviceType = HidDeviceType_FullKey15,
+            .npadInterfaceType = HidNpadInterfaceType_USB,
+            .singleColorBody = 0xFFFFFFFF,
+            .singleColorButtons = 0xFF000000,
+            .colorLeftGrip = 0xFFFF0000,
+            .colorRightGrip = 0xFF0000FF,
+        };
+        HiddbgHdlsState state = {
+            .battery_level = 4,
+        };
+    };
+
     using HidResponse = FutureResponse<bluetooth::HidEventType, bluetooth::HidReportEventInfo, u8>;
 
     constexpr auto BATTERY_MAX = 8;
@@ -363,6 +390,7 @@ namespace ams::controller {
 
             virtual void UpdateControllerState(const bluetooth::HidReport *report);
             virtual void ApplyButtonCombos(SwitchButtonData *buttons);
+            virtual void TranslateInputReport(SwitchInputReport *input_report);
 
             bluetooth::Address m_address;
             HardwareID m_id;
@@ -374,6 +402,18 @@ namespace ams::controller {
             bluetooth::HidReport m_output_report;
 
             std::queue<std::shared_ptr<HidResponse>> m_future_responses;
+
+            bool m_hdls_combo_pressed = false;
+
+            struct hdls_controller m_hdls_controllers[3];
+
+            bool m_has_user_cal_left;
+            struct joycon_stick_cal_xy m_cal_left;
+            struct joycon_stick_cal_xy m_cal_left_user;
+
+            bool m_has_user_cal_right;
+            struct joycon_stick_cal_xy m_cal_right;
+            struct joycon_stick_cal_xy m_cal_right_user;
     };
 
 }
