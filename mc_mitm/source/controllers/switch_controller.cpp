@@ -394,6 +394,8 @@ namespace ams::controller {
             hdls_controller->state.buttons = 0;
             hdls_controller->state.analog_stick_l.x = 0;
             hdls_controller->state.analog_stick_l.y = 0;
+            hdls_controller->state.analog_stick_r.x = 0;
+            hdls_controller->state.analog_stick_r.y = 0;
 
             if (i == hdls_id) {
                 if (buttons->A) {
