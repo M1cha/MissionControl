@@ -209,8 +209,8 @@ namespace ams::controller {
 
                 if (input_report->type0x21.hid_command_response.data.serial_flash_read.address == 0x6050) {
                     if (ams::mitm::GetSystemLanguage() == 10) {
-                        u8 data[] = {0xff, 0xd7, 0x00, 0x00, 0x57, 0xb7, 0x00, 0x57, 0xb7, 0x00, 0x57, 0xb7};
-                        std::memcpy(data, data, sizeof(data));
+                        u8 new_data[] = {0xff, 0xd7, 0x00, 0x00, 0x57, 0xb7, 0x00, 0x57, 0xb7, 0x00, 0x57, 0xb7};
+                        std::memcpy(data, new_data, sizeof(new_data));
                     }
                 }
                 else if (input_report->type0x21.hid_command_response.data.serial_flash_read.address == 0x8010) {
