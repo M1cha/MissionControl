@@ -404,10 +404,10 @@ namespace ams::controller {
                 if (buttons->B) {
                     hdls_controller->state.buttons |= HidNpadButton_B;
                 }
-                if (buttons->L) {
+                if (buttons->L && hdls_id != 1) {
                     hdls_controller->state.buttons |= HidNpadButton_L;
                 }
-                if (buttons->R) {
+                if (buttons->R && hdls_id != 2) {
                     hdls_controller->state.buttons |= HidNpadButton_R;
                 }
                 if (buttons->X) {
@@ -415,6 +415,9 @@ namespace ams::controller {
                 }
                 if (buttons->Y) {
                     hdls_controller->state.buttons |= HidNpadButton_Y;
+                }
+                if (buttons->ZL && hdls_id != 0) {
+                    hdls_controller->state.buttons |= HidNpadButton_ZL;
                 }
                 if (buttons->ZR) {
                     hdls_controller->state.buttons |= HidNpadButton_ZR;
