@@ -165,6 +165,19 @@ namespace ams::controller {
         return path;
     }
 
+    SwitchController::~SwitchController() {
+        for (size_t i=0; i<ARRAY_SIZE(m_hdls_controllers); i+=1) {
+            struct hdls_controller *hdls_controller = &m_hdls_controllers[i];
+
+            if (!hdls_controller->initialized) {
+                continue;
+            }
+
+            hiddbgDetachHdlsVirtualDevice(hdls_controller->handle);
+            hdls_controller->initialized = false;
+        }
+    }
+
     Result SwitchController::Initialize() {
         R_SUCCEED();
     }

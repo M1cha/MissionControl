@@ -369,7 +369,7 @@ namespace ams::controller {
             , m_input_mutex(false)
             , m_output_mutex(false) { }
 
-            virtual ~SwitchController() { };
+            virtual ~SwitchController();
 
             const bluetooth::Address& Address() const { return m_address; }
 
