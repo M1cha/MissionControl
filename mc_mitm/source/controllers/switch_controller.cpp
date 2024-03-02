@@ -356,6 +356,7 @@ namespace ams::controller {
 
     void SwitchController::TranslateInputReport(SwitchInputReport *input_report) {
         SwitchButtonData *buttons = &input_report->buttons;
+        const bool current_b_button = buttons->B;
 
         size_t hdls_id = SIZE_MAX;
         if (buttons->ZL) {
@@ -401,7 +402,7 @@ namespace ams::controller {
                 if (buttons->A) {
                     hdls_controller->state.buttons |= HidNpadButton_A;
                 }
-                if (buttons->B) {
+                if (buttons->B && (!m_b_press_active || m_b_press_id == hdls_id)) {
                     hdls_controller->state.buttons |= HidNpadButton_B;
                 }
                 if (buttons->L && hdls_id != 1) {
@@ -485,6 +486,19 @@ namespace ams::controller {
                 hiddbgDetachHdlsVirtualDevice(hdls_controller->handle);
                 hdls_controller->initialized = false;
             }
+        }
+
+        if (m_b_press_active && m_b_press_id != hdls_id) {
+            buttons->B = false;
+        }
+
+        if (current_b_button) {
+            if (!m_b_press_active) {
+                m_b_press_active = true;
+                m_b_press_id = hdls_id;
+            }
+        } else {
+            m_b_press_active = false;
         }
     }
 

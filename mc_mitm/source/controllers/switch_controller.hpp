@@ -414,6 +414,9 @@ namespace ams::controller {
             bool m_has_user_cal_right;
             struct joycon_stick_cal_xy m_cal_right;
             struct joycon_stick_cal_xy m_cal_right_user;
+
+            bool m_b_press_active = false;
+            size_t m_b_press_id = SIZE_MAX;
     };
 
 }
